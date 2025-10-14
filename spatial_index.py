@@ -209,31 +209,37 @@ class FederationIndex:
                       disciplines: Optional[List[str]] = None,
                       ifc_classes: Optional[List[str]] = None) -> List[FederationElement]:
         """
-        Query elements intersecting a bounding box
+        Query elements intersecting bounding box
         
         Args:
             min_xyz: Minimum corner (x, y, z)
             max_xyz: Maximum corner (x, y, z)
             disciplines: Optional filter by discipline tags
-            ifc_classes: Optional filter by IFC class names
+            ifc_classes: Optional filter by IFC classes
             
         Returns:
             List of FederationElement instances
         """
         if not self.is_loaded:
-            raise RuntimeError("Index not built. Call build() first.")
+            raise RuntimeError("Index not loaded. Call build() first.")
         
-        # Construct bbox for rtree query
+        # Initialize results list
+        results = []
+        
+        # Normalize discipline filters early
+        if disciplines:
+            disciplines = [self._normalize_discipline(d) for d in disciplines]
+        
+        # Construct bbox for rtree query (always needed)
         query_bbox = min_xyz + max_xyz
         
-        # Query rtree for intersecting elements
-        results = []
+        # Query rtree spatial index
         for item in self.rtree_idx.intersection(query_bbox, objects=True):
             guid = item.object
             element = self.guid_to_element[guid]
             
-            # Apply discipline filter
-            if disciplines and element.discipline not in disciplines:
+            # Apply discipline filter with normalization
+            if disciplines and self._normalize_discipline(element.discipline) not in disciplines:
                 continue
             
             # Apply IFC class filter
@@ -274,7 +280,7 @@ class FederationIndex:
         Args:
             start: Start point (x, y, z)
             end: End point (x, y, z)
-            buffer: Corridor width/height buffer in mm
+            buffer: Corridor width/height buffer in METERS
             disciplines: Optional filter by discipline tags
             
         Returns:
@@ -293,6 +299,32 @@ class FederationIndex:
             (max_x, max_y, max_z),
             disciplines
         )
+    
+    def _normalize_discipline(self, discipline: str) -> str:
+        """
+        Normalize discipline name to core abbreviation
+        SJTII-STR- → STR
+        SJTII-ACMV → ACMV
+        STR → STR
+        """
+        import re
+        
+        # Extract 2-4 letter uppercase abbreviations
+        parts = re.split(r'[-_]', discipline.upper())
+        
+        known = ['STR', 'ACMV', 'ARC', 'ELEC', 'FP', 'SP', 'CW', 
+                'STRUCT', 'ARCH', 'HVAC', 'MECH', 'PLUMB', 'FIRE']
+        
+        for part in parts:
+            if part in known:
+                return part
+        
+        # Return first 2-4 letter alpha part
+        for part in parts:
+            if 2 <= len(part) <= 4 and part.isalpha():
+                return part
+        
+        return discipline  # Fallback unchanged
     
     def get_element_by_guid(self, guid: str) -> Optional[FederationElement]:
         """Retrieve element by GlobalId"""

@@ -84,11 +84,27 @@ class SelectFederatedFile(Operator, ImportHelper):
         """Auto-detect discipline tag from filename"""
         stem = file_path.stem.upper()
         
-        # Extract first alphabetic part
-        for part in stem.split('_'):
-            if len(part) >= 2 and part.isalpha():
-                return part[:10]
+        # Split by both hyphen and underscore
+        import re
+        parts = re.split(r'[-_]', stem)
         
+        # Known discipline codes (add more as needed)
+        known_disciplines = [
+            'STR', 'ACMV', 'ARC', 'ELEC', 'FP', 'SP', 'CW',
+            'STRUCT', 'ARCH', 'HVAC', 'MECH', 'PLUMB', 'FIRE'
+        ]
+        
+        # Look for known discipline in parts
+        for part in parts:
+            if part in known_disciplines:
+                return part
+        
+        # Fallback: find first 2-4 letter alphabetic part
+        for part in parts:
+            if 2 <= len(part) <= 4 and part.isalpha():
+                return part
+        
+        # Last resort: first 10 chars
         return stem[:10]
 
 
