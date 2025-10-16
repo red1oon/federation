@@ -159,27 +159,31 @@ class FederationPreprocessor:
                       ("version", SCHEMA_VERSION))
         
         # Main elements table
+        # Metadata table (non-spatial attributes)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS elements (
-                guid TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS elements_meta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guid TEXT UNIQUE NOT NULL,
                 discipline TEXT NOT NULL,
                 ifc_class TEXT NOT NULL,
-                min_x REAL NOT NULL,
-                min_y REAL NOT NULL,
-                min_z REAL NOT NULL,
-                max_x REAL NOT NULL,
-                max_y REAL NOT NULL,
-                max_z REAL NOT NULL,
                 filepath TEXT NOT NULL
             )
         """)
         
-        # Spatial indices for fast queries
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON elements(discipline)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ifc_class ON elements(ifc_class)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_spatial_x ON elements(min_x, max_x)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_spatial_y ON elements(min_y, max_y)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_spatial_z ON elements(min_z, max_z)")
+        # Non-spatial indices
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_guid ON elements_meta(guid)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON elements_meta(discipline)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_ifc_class ON elements_meta(ifc_class)")
+        
+        # Spatial index (SQLite R-tree virtual table for 3D bounding boxes)
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS elements_rtree USING rtree(
+                id,              -- References elements_meta.id
+                min_x, max_x,    -- X-axis bounds
+                min_y, max_y,    -- Y-axis bounds
+                min_z, max_z     -- Z-axis bounds
+            )
+        """)
         
         conn.commit()
         conn.close()
@@ -345,19 +349,34 @@ class FederationPreprocessor:
             return None
     
     def _store_to_database(self, elements_data: List[Dict]):
-        """Store element data to SQLite database"""
+        """Store element data to SQLite database (metadata + spatial R-tree)"""
         if not elements_data:
             return
         
         conn = sqlite3.connect(self.output_db_path)
         cursor = conn.cursor()
         
-        # Batch insert for performance
-        cursor.executemany("""
-            INSERT OR REPLACE INTO elements 
-            (guid, discipline, ifc_class, min_x, min_y, min_z, max_x, max_y, max_z, filepath)
-            VALUES (:guid, :discipline, :ifc_class, :min_x, :min_y, :min_z, :max_x, :max_y, :max_z, :filepath)
-        """, elements_data)
+        # Insert each element into both tables
+        for elem in elements_data:
+            # Insert metadata first
+            cursor.execute("""
+                INSERT OR REPLACE INTO elements_meta (guid, discipline, ifc_class, filepath)
+                VALUES (?, ?, ?, ?)
+            """, (elem['guid'], elem['discipline'], elem['ifc_class'], elem['filepath']))
+            
+            # Get the ID (either newly inserted or existing)
+            cursor.execute("SELECT id FROM elements_meta WHERE guid = ?", (elem['guid'],))
+            elem_id = cursor.fetchone()[0]
+            
+            # Delete old R-tree entry if exists (can't update R-tree, must delete+insert)
+            cursor.execute("DELETE FROM elements_rtree WHERE id = ?", (elem_id,))
+            
+            # Insert into R-tree
+            cursor.execute("""
+                INSERT INTO elements_rtree (id, min_x, max_x, min_y, max_y, min_z, max_z)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (elem_id, elem['min_x'], elem['max_x'], 
+                  elem['min_y'], elem['max_y'], elem['min_z'], elem['max_z']))
         
         conn.commit()
         conn.close()

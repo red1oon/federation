@@ -256,10 +256,10 @@ class PreprocessFederatedModels(Operator):
 
 
 class LoadFederationIndex(Operator):
-    """Load the federation spatial index into memory"""
+    """Load the federation spatial index"""
     bl_idname = "bim.load_federation_index"
     bl_label = "Load Federation Index"
-    bl_description = "Load the preprocessed federation index into memory for spatial queries"
+    bl_description = "Load the preprocessed federation index (SQLite R-tree) for spatial queries"
     bl_options = {"REGISTER"}
     
     @classmethod
@@ -285,10 +285,10 @@ class LoadFederationIndex(Operator):
         self.report({'INFO'}, f"Loading federation index from {db_path.name}...")
         
         try:
-            # Create and build index
+            # Create and validate index (SQLite R-tree already built during preprocessing)
             # Store in window manager so it persists across scene changes
             index = FederationIndex(db_path)
-            index.build()
+            index.build()  # Validates schema and loads statistics (instant)
             
             # Store reference in window manager (persists across scenes)
             bpy.types.WindowManager.federation_index = index
