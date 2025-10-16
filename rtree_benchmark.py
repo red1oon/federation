@@ -133,13 +133,12 @@ def query_sqlite_rtree(db_path, bbox):
     return results
 
 
-def query_rtree_library(idx, elements, bbox):
+def query_rtree_library(idx, guid_to_elem, bbox):
     """Query rtree library index."""
     results = []
     for item in idx.intersection(bbox, objects=True):
         guid = item.object
-        # Find element by guid (in real code, would use lookup dict)
-        elem = next((e for e in elements if e['guid'] == guid), None)
+        elem = guid_to_elem.get(guid)
         if elem:
             results.append((elem['guid'], elem['discipline'], elem['ifc_class']))
     return results
@@ -262,6 +261,9 @@ def main():
     print(f"  Completed {len(queries)} queries")
     print()
     
+    # Create lookup dictionary for fast guid->element access
+    guid_to_elem = {e['guid']: e for e in elements}
+    
     # Benchmark rtree library
     print("Benchmarking rtree library queries...")
     rtree_times = []
@@ -269,7 +271,7 @@ def main():
     
     for bbox in queries:
         start = time.time()
-        results = query_rtree_library(rtree_idx, elements, bbox)
+        results = query_rtree_library(rtree_idx, guid_to_elem, bbox)
         elapsed = time.time() - start
         rtree_times.append(elapsed * 1000)  # Convert to ms
         rtree_results_count.append(len(results))
@@ -338,10 +340,16 @@ def main():
     
     print()
     print("=" * 70)
-    
+    # After line 240 in benchmark, add:
+    if mismatches > 0:
+        print("\n  All mismatches:")
+        for i, (s, r) in enumerate(zip(sqlite_results_count, rtree_results_count)):
+            if s != r:
+                diff = abs(s - r)
+                pct = (diff / max(s, r)) * 100
+                print(f"    Query {i}: SQLite={s}, rtree={r}, diff={diff} ({pct:.2f}%)")
     # Cleanup
     sqlite_db.unlink()
-
 
 if __name__ == "__main__":
     main()
